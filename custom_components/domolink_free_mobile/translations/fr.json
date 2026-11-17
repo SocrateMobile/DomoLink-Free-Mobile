@@ -1,0 +1,39 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connexion Free Mobile",
+        "description": "Saisissez vos identifiants Espace Abonné Free Mobile (identifiant à 8 chiffres et mot de passe).",
+        "data": {
+          "username": "Identifiant Free Mobile",
+          "password": "Mot de passe"
+        }
+      },
+      "otp": {
+        "title": "Validation 2FA Free Mobile",
+        "description": "Saisissez le code de vérification reçu ({type_2fa}) ou cochez la case pour le recevoir par email.",
+        "data": {
+          "otp_code": "Code OTP",
+          "switch_email_otp": "Envoyer le code par email"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Ré-authentification Free Mobile",
+        "description": "La session Free Mobile pour {username} a expiré. Veuillez ressaisir votre mot de passe.",
+        "data": {
+          "password": "Mot de passe"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Identifiant ou mot de passe invalide.",
+      "invalid_otp": "Code OTP invalide ou expiré.",
+      "cannot_connect": "Impossible de joindre mobile.free.fr.",
+      "unknown": "Erreur inattendue."
+    },
+    "abort": {
+      "already_configured": "Ce compte Free Mobile est déjà configuré.",
+      "reauth_successful": "Ré-authentification réussie."
+    }
+  }
+}
