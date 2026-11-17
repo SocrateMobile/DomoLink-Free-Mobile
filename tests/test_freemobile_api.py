@@ -24,8 +24,40 @@ ha_core = types.ModuleType("homeassistant.core")
 ha_core.HomeAssistant = object
 
 ha_ce = types.ModuleType("homeassistant.config_entries")
+ha_ce.SOURCE_REAUTH = "reauth"
 ha_ce.ConfigEntry = object
-ha_ce.ConfigFlow = type("ConfigFlow", (), {"__init_subclass__": classmethod(lambda cls, **kw: None)})
+
+
+class _StubConfigFlow:
+    source = "user"
+    hass = None
+    context = {}
+
+    def __init_subclass__(cls, **kw):
+        pass
+
+    async def async_set_unique_id(self, unique_id):
+        self._unique_id = unique_id
+
+    def _abort_if_unique_id_configured(self):
+        pass
+
+    def _get_reauth_entry(self):
+        if self.source != "reauth":
+            raise ValueError(f"Source is {self.source}, expected reauth")
+        return getattr(self, "_stub_reauth_entry", None)
+
+    def async_show_form(self, **kwargs):
+        return {"type": "form", **kwargs}
+
+    def async_create_entry(self, **kwargs):
+        return {"type": "create_entry", **kwargs}
+
+    def async_update_reload_and_abort(self, entry, **kwargs):
+        return {"type": "abort", "reason": "reauth_successful", "entry": entry, **kwargs}
+
+
+ha_ce.ConfigFlow = _StubConfigFlow
 ha_ce.ConfigFlowResult = dict
 
 ha_exc = types.ModuleType("homeassistant.exceptions")
@@ -203,3 +235,68 @@ def test_sensor_calculations():
     assert _out_of_bundle_total(line) == 4.25
     assert _last_invoice_amount(line) == 15.99
     assert _unpaid_total(line) == 19.99
+
+
+def test_config_flow_user_otp_does_not_call_get_reauth_entry(monkeypatch):
+    from custom_components.domolink_free_mobile import config_flow as cf_mod
+
+    session = FakeSession([
+        FakeResponse(200, {"otpId": 42, "type2FA": "email", "trustUuid": "uuid-1", "accessToken": "temp-otp"}),
+        FakeResponse(200, {"accessToken": "acc-1", "refreshToken": "ref-1", "trustUuid": "uuid-2"}),
+    ])
+    monkeypatch.setattr(cf_mod, "async_get_clientsession", lambda hass: session)
+
+    flow = cf_mod.FreeMobileConfigFlow()
+    flow.source = "user"
+
+    step1 = asyncio.run(flow.async_step_user({"username": "12345678", "password": "secret"}))
+    assert step1["type"] == "form"
+    assert step1["step_id"] == "otp"
+
+    step2 = asyncio.run(flow.async_step_otp({"otp_code": "225760", "switch_email_otp": False}))
+    assert step2["type"] == "create_entry"
+    assert step2["title"] == "Free Mobile (12345678)"
+    assert step2["data"]["access_token"] == "acc-1"
+    assert step2["data"]["refresh_token"] == "ref-1"
+    assert step2["data"]["trust_uuid"] == "uuid-2"
+
+
+def test_config_flow_reauth_otp_updates_existing_entry(monkeypatch):
+    from custom_components.domolink_free_mobile import config_flow as cf_mod
+
+    session = FakeSession([
+        FakeResponse(200, {"otpId": 99, "type2FA": "sms", "trustUuid": "uuid-old", "accessToken": "temp-otp"}),
+        FakeResponse(200, {"accessToken": "acc-new", "refreshToken": "ref-new"}),
+    ])
+    monkeypatch.setattr(cf_mod, "async_get_clientsession", lambda hass: session)
+
+    existing_entry = object()
+    flow = cf_mod.FreeMobileConfigFlow()
+    flow.source = "reauth"
+    flow._stub_reauth_entry = existing_entry
+
+    step1 = asyncio.run(flow.async_step_reauth({"username": "12345678", "trust_uuid": "uuid-old"}))
+    assert step1["type"] == "form"
+    assert step1["step_id"] == "reauth_confirm"
+
+    step2 = asyncio.run(flow.async_step_reauth_confirm({"password": "secret"}))
+    assert step2["type"] == "form"
+    assert step2["step_id"] == "otp"
+
+    step3 = asyncio.run(flow.async_step_otp({"otp_code": "123456", "switch_email_otp": False}))
+    assert step3["type"] == "abort"
+    assert step3["entry"] is existing_entry
+    assert step3["data"]["access_token"] == "acc-new"
+    assert step3["data"]["trust_uuid"] == "uuid-old"
+
+
+def test_config_flow_otp_invalid_code_returns_form_error(monkeypatch):
+    from custom_components.domolink_free_mobile import config_flow as cf_mod
+
+    flow = cf_mod.FreeMobileConfigFlow()
+    flow.source = "user"
+    flow._otp_id = 42
+
+    res = asyncio.run(flow.async_step_otp({"otp_code": "abc", "switch_email_otp": False}))
+    assert res["type"] == "form"
+    assert res["errors"]["base"] == "invalid_otp"

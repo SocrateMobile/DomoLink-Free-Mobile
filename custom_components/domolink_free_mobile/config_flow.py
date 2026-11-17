@@ -7,7 +7,7 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import SOURCE_REAUTH, ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -172,11 +172,20 @@ class FreeMobileConfigFlow(ConfigFlow, domain=DOMAIN):
             CONF_USERNAME: username,
             CONF_ACCESS_TOKEN: token_data["accessToken"],
             CONF_REFRESH_TOKEN: token_data.get("refreshToken", ""),
-            CONF_TRUST_UUID: trust_uuid or token_data.get("trustUuid"),
+            CONF_TRUST_UUID: trust_uuid or token_data.get("trustUuid") or self._trust_uuid,
         }
-        reauth_entry = self._get_reauth_entry() if hasattr(self, "_get_reauth_entry") else None
-        if reauth_entry is not None:
-            return self.async_update_reload_and_abort(reauth_entry, data=entry_data)
+        if getattr(self, "source", None) == SOURCE_REAUTH:
+            if hasattr(self, "_get_reauth_entry"):
+                reauth_entry = self._get_reauth_entry()
+            else:
+                entry_id = getattr(self, "context", {}).get("entry_id")
+                reauth_entry = (
+                    self.hass.config_entries.async_get_entry(entry_id)
+                    if entry_id and getattr(self, "hass", None) is not None
+                    else None
+                )
+            if reauth_entry is not None:
+                return self.async_update_reload_and_abort(reauth_entry, data=entry_data)
         return self.async_create_entry(title=f"Free Mobile ({username})", data=entry_data)
 
     def _update_reauth_entry(
