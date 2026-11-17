@@ -124,7 +124,7 @@ class FakeSession:
 
 def test_login_otp_required_and_validate():
     session = FakeSession([
-        FakeResponse(200, {"otpId": 42, "type2FA": "sms", "trustUuid": "uuid-1"}),
+        FakeResponse(200, {"otpId": 42, "type2FA": "sms", "trustUuid": "uuid-1", "accessToken": "temp-otp-jwt"}),
         FakeResponse(200, {"accessToken": "acc-1", "refreshToken": "ref-1", "trustUuid": "uuid-2"}),
     ])
     client = FreeMobileApiClient(session)
@@ -133,12 +133,14 @@ def test_login_otp_required_and_validate():
         asyncio.run(client.async_login("12345678", "secret"))
     assert exc.value.otp_id == 42
     assert exc.value.type_2fa == "sms"
+    assert exc.value.access_token == "temp-otp-jwt"
 
     res = asyncio.run(client.async_validate_otp(42, 654321, is_trusted=True))
     assert res["accessToken"] == "acc-1"
     assert client.access_token == "acc-1"
     assert client.refresh_token == "ref-1"
     assert client.trust_uuid == "uuid-2"
+    assert session.calls[1][2]["headers"]["Authorization"] == "Bearer temp-otp-jwt"
 
 
 def test_401_triggers_single_refresh_and_retries():

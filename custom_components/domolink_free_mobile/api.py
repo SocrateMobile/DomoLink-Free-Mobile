@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+import logging
 from typing import Any
 
 import aiohttp
+
+_LOGGER = logging.getLogger(__name__)
 
 from .const import (
     BASE_URL,
@@ -33,11 +36,13 @@ class FreeMobileOtpRequired(FreeMobileApiError):
         otp_id: int,
         type_2fa: str,
         trust_uuid: str | None = None,
+        access_token: str | None = None,
     ) -> None:
         super().__init__(f"2FA OTP required ({type_2fa}, id={otp_id})")
         self.otp_id = otp_id
         self.type_2fa = type_2fa
         self.trust_uuid = trust_uuid
+        self.access_token = access_token
 
 
 class FreeMobileApiClient:
@@ -66,6 +71,9 @@ class FreeMobileApiClient:
     ) -> dict[str, str]:
         headers: dict[str, str] = {
             HEADER_PLATFORM: HEADER_PLATFORM_VALUE,
+            "X-App-Platform": "android",
+            "X-App-Version": "3.9.1",
+            "User-Agent": "Free/3.9.1 (Android)",
             "Accept": "application/json",
         }
         if include_auth and self.access_token:
@@ -110,9 +118,11 @@ class FreeMobileApiClient:
                     )
                 if resp.status in (401, 403):
                     text = await resp.text()
+                    _LOGGER.warning("Free Mobile auth error on %s (HTTP %s): %s", path, resp.status, text)
                     raise FreeMobileAuthError(f"HTTP {resp.status}: {text}")
                 if resp.status >= 400:
                     text = await resp.text()
+                    _LOGGER.warning("Free Mobile API error on %s (HTTP %s): %s", path, resp.status, text)
                     raise FreeMobileApiError(f"HTTP {resp.status} on {path}: {text}")
                 if resp.content_type == "application/json":
                     return await resp.json()
@@ -135,11 +145,17 @@ class FreeMobileApiClient:
             retry_on_401=False,
         )
         otp_id = data.get("otpId")
-        if otp_id is not None and not data.get("accessToken"):
+        if otp_id is not None:
+            temp_token = data.get("accessToken")
+            if temp_token:
+                self.access_token = temp_token
+            if data.get("trustUuid"):
+                self.trust_uuid = data["trustUuid"]
             raise FreeMobileOtpRequired(
                 otp_id=int(otp_id),
                 type_2fa=str(data.get("type2FA", "sms")),
                 trust_uuid=data.get("trustUuid"),
+                access_token=temp_token,
             )
 
         self.access_token = data.get("accessToken")
@@ -161,7 +177,7 @@ class FreeMobileApiClient:
             "POST",
             "/account/api/auth/otp",
             json_body={"idOtp": otp_id, "codeOtp": code_otp, "isTrusted": is_trusted},
-            include_auth=False,
+            include_auth=bool(self.access_token),
             retry_on_401=False,
         )
         self.access_token = data.get("accessToken")
@@ -178,7 +194,7 @@ class FreeMobileApiClient:
             "POST",
             "/account/api/auth/otp/mail",
             json_body={"login": login},
-            include_auth=False,
+            include_auth=bool(self.access_token),
             retry_on_401=False,
         )
 
