@@ -37,6 +37,7 @@ class FreeMobileConfigFlow(ConfigFlow, domain=DOMAIN):
         self._otp_id: int | None = None
         self._type_2fa: str = "sms"
         self._trust_uuid: str | None = None
+        self._temp_access_token: str | None = None
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -58,6 +59,7 @@ class FreeMobileConfigFlow(ConfigFlow, domain=DOMAIN):
                 self._otp_id = otp_req.otp_id
                 self._type_2fa = otp_req.type_2fa
                 self._trust_uuid = otp_req.trust_uuid
+                self._temp_access_token = otp_req.access_token
                 return await self.async_step_otp()
             except FreeMobileAuthError:
                 errors["base"] = "invalid_auth"
@@ -82,6 +84,7 @@ class FreeMobileConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             client = FreeMobileApiClient(
                 async_get_clientsession(self.hass),
+                access_token=self._temp_access_token,
                 trust_uuid=self._trust_uuid,
             )
             if user_input.get(CONF_SWITCH_EMAIL_OTP):
@@ -135,6 +138,7 @@ class FreeMobileConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             client = FreeMobileApiClient(
                 async_get_clientsession(self.hass),
+                access_token=self._temp_access_token,
                 trust_uuid=self._trust_uuid,
             )
             try:
@@ -144,6 +148,7 @@ class FreeMobileConfigFlow(ConfigFlow, domain=DOMAIN):
                 self._otp_id = otp_req.otp_id
                 self._type_2fa = otp_req.type_2fa
                 self._trust_uuid = otp_req.trust_uuid
+                self._temp_access_token = otp_req.access_token
                 return await self.async_step_otp()
             except FreeMobileAuthError:
                 errors["base"] = "invalid_auth"
