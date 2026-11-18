@@ -13,6 +13,8 @@ _LOGGER = logging.getLogger(__name__)
 
 from .const import (
     BASE_URL,
+    HEADER_FREE_APP_PLATFORM,
+    HEADER_FREE_APP_PLATFORM_VALUE,
     HEADER_FREE_VERSION,
     HEADER_FREE_VERSION_VALUE,
     HEADER_PLATFORM,
@@ -71,6 +73,7 @@ class FreeMobileApiClient:
     ) -> dict[str, str]:
         headers: dict[str, str] = {
             HEADER_PLATFORM: HEADER_PLATFORM_VALUE,
+            HEADER_FREE_APP_PLATFORM: HEADER_FREE_APP_PLATFORM_VALUE,
             "X-App-Platform": "android",
             "X-App-Version": "3.9.1",
             "User-Agent": "Free/3.9.1 (Android)",
@@ -89,9 +92,11 @@ class FreeMobileApiClient:
         *,
         json_body: dict[str, Any] | None = None,
         form_data: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
         include_auth: bool = True,
         retry_on_401: bool = True,
+        raw_bytes: bool = False,
     ) -> Any:
         url = f"{BASE_URL}{path.lstrip('/')}"
         headers = self._base_headers(include_auth=include_auth, extra_headers=extra_headers)
@@ -102,6 +107,7 @@ class FreeMobileApiClient:
                 url,
                 json=json_body,
                 data=form_data,
+                params=params,
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
@@ -112,9 +118,11 @@ class FreeMobileApiClient:
                         path,
                         json_body=json_body,
                         form_data=form_data,
+                        params=params,
                         extra_headers=extra_headers,
                         include_auth=include_auth,
                         retry_on_401=False,
+                        raw_bytes=raw_bytes,
                     )
                 if resp.status in (401, 403):
                     text = await resp.text()
@@ -124,6 +132,8 @@ class FreeMobileApiClient:
                     text = await resp.text()
                     _LOGGER.warning("Free Mobile API error on %s (HTTP %s): %s", path, resp.status, text)
                     raise FreeMobileApiError(f"HTTP {resp.status} on {path}: {text}")
+                if raw_bytes:
+                    return await resp.read()
                 if resp.content_type == "application/json":
                     return await resp.json()
                 text = await resp.text()
@@ -291,3 +301,133 @@ class FreeMobileApiClient:
         if isinstance(res, dict):
             return res.get("sims", [])
         return []
+
+    async def async_get_puk(self, offer_id: int) -> str | None:
+        """Fetch the PUK code for a given offerId."""
+        res = await self._request("GET", "/account/api/puk", params={"offerId": offer_id})
+        if isinstance(res, dict):
+            return res.get("puk")
+        return None
+
+    async def async_get_services(self, login: str) -> list[dict[str, Any]]:
+        """Fetch active/inactive services for the line."""
+        res = await self._request("GET", f"/account/api/subscriber/{login}/services")
+        if isinstance(res, list):
+            return res
+        if isinstance(res, dict):
+            return res.get("services", [])
+        return []
+
+    async def async_get_insurances(self, login: str) -> list[dict[str, Any]]:
+        """Fetch mobile insurances attached to the line."""
+        res = await self._request("GET", f"/account/api/subscriber/{login}/insurances")
+        if isinstance(res, list):
+            return res
+        if isinstance(res, dict):
+            return res.get("insurances", [])
+        return []
+
+    async def async_get_plan_info(self, login: str) -> dict[str, Any]:
+        """Fetch detailed plan info (URLs and roaming zones)."""
+        res = await self._request("GET", f"/account/api/subscriber/{login}/plan-infos")
+        return res if isinstance(res, dict) else {}
+
+    async def async_get_proxi_eligibility(self, login: str) -> dict[str, Any]:
+        """Fetch Free Proxi support eligibility and open contact status."""
+        res = await self._request("GET", f"/account/api/subscriber/{login}/proxi/eligibility")
+        return res if isinstance(res, dict) else {}
+
+    async def async_get_retractation(self, login: str) -> dict[str, Any]:
+        """Fetch retractation window status for the line."""
+        res = await self._request("GET", f"/account/api/subscriber/{login}/retractable")
+        return res if isinstance(res, dict) else {}
+
+    async def async_get_banners(self, login: str) -> list[dict[str, Any]]:
+        """Fetch account banners/alerts for the subscriber."""
+        res = await self._request(
+            "GET",
+            f"account/api/banners/{login}",
+            extra_headers={"Content-Type": "application/json", HEADER_PLATFORM: HEADER_PLATFORM_VALUE},
+        )
+        if isinstance(res, list):
+            return res
+        if isinstance(res, dict):
+            return res.get("banners", [])
+        return []
+
+    async def async_get_communications(
+        self,
+        login: str,
+        comm_type: str | None = None,
+        per_page: int = 10,
+        page: int = 1,
+    ) -> dict[str, Any]:
+        """Fetch recent SMS and email communications sent by Free Mobile."""
+        params: dict[str, Any] = {"perPage": per_page, "page": page}
+        if comm_type:
+            params["type"] = comm_type
+        res = await self._request(
+            "GET",
+            f"/account/api/subscriber/{login}/communications",
+            params=params,
+        )
+        return res if isinstance(res, dict) else {}
+
+    async def async_get_roaming(
+        self,
+        login: str,
+        mcc: str | None = None,
+        iso: str | None = None,
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        """Fetch roaming rates for all countries or a specific mcc/iso."""
+        params: dict[str, Any] = {}
+        if mcc:
+            params["mcc"] = mcc
+        if iso:
+            params["iso"] = iso
+        return await self._request(
+            "GET",
+            f"/account/api/roaming/{login}",
+            params=params or None,
+        )
+
+    async def async_get_invoice_pdf(self, login: str, invoice_id: str | int) -> bytes:
+        """Download an invoice PDF as raw bytes."""
+        return await self._request(
+            "GET",
+            f"account/api/subscriber/{login}/document/invoices/{invoice_id}",
+            raw_bytes=True,
+        )
+
+    async def async_activate_sim(
+        self,
+        login: str,
+        iccid: str,
+        offer_id: int,
+        force_retraction: bool = False,
+    ) -> dict[str, Any]:
+        """Activate a physical SIM card by ICCID."""
+        res = await self._request(
+            "POST",
+            f"/account/api/subscriber/{login}/sims/{iccid}/activate",
+            json_body={"offer": offer_id, "forceRetraction": force_retraction},
+        )
+        return res if isinstance(res, dict) else {}
+
+    async def async_activate_esim(self, login: str, force: bool = False) -> dict[str, Any]:
+        """Activate an eSIM on the line."""
+        res = await self._request(
+            "POST",
+            f"/account/api/subscriber/{login}/esim/activate",
+            json_body={"force": force},
+        )
+        return res if isinstance(res, dict) else {}
+
+    async def async_change_email(self, login: str, email: str) -> dict[str, Any]:
+        """Update the contact email address on the subscriber line."""
+        res = await self._request(
+            "POST",
+            f"account/api/subscriber/{login}/change-email",
+            json_body={"email": email},
+        )
+        return res if isinstance(res, dict) else {}

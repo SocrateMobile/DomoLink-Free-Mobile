@@ -29,6 +29,7 @@
       "invalid_auth": "Identifiant ou mot de passe invalide.",
       "invalid_otp": "Code OTP invalide ou expiré.",
       "cannot_connect": "Impossible de joindre mobile.free.fr.",
+      "server_error": "Erreur serveur Free Mobile (HTTP 5xx). Réessayez ou utilisez le code SMS.",
       "unknown": "Erreur inattendue."
     },
     "abort": {
