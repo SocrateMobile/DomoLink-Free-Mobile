@@ -28,12 +28,27 @@ class FreeMobileLineData:
     state: str
     has_freebox_advantage: bool
     is_master: bool
+    offer_id: int | None = None
+    subscription_date: str | None = None
+    is_flex_eligible: bool = False
+    is_watch_eligible: bool = False
+    contact: dict[str, Any] = field(default_factory=dict)
+    identity: dict[str, Any] = field(default_factory=dict)
+    debit_method: dict[str, Any] = field(default_factory=dict)
     consumption: dict[str, Any] = field(default_factory=dict)
     offer: dict[str, Any] = field(default_factory=dict)
     options: dict[str, dict[str, Any]] = field(default_factory=dict)
     invoices: dict[str, Any] = field(default_factory=dict)
     unpaids: dict[str, Any] = field(default_factory=dict)
     sims: list[dict[str, Any]] = field(default_factory=list)
+    puk: str | None = None
+    services: list[dict[str, Any]] = field(default_factory=list)
+    insurances: list[dict[str, Any]] = field(default_factory=list)
+    plan_info: dict[str, Any] = field(default_factory=dict)
+    proxi_eligibility: dict[str, Any] = field(default_factory=dict)
+    retractation: dict[str, Any] = field(default_factory=dict)
+    banners: list[dict[str, Any]] = field(default_factory=list)
+    communications: dict[str, Any] = field(default_factory=dict)
 
 
 class FreeMobileDataUpdateCoordinator(DataUpdateCoordinator[dict[str, FreeMobileLineData]]):
@@ -56,15 +71,58 @@ class FreeMobileDataUpdateCoordinator(DataUpdateCoordinator[dict[str, FreeMobile
         self.main_login = main_login
         self.entry = entry
 
-    async def _async_fetch_line(self, line_meta: dict[str, Any]) -> FreeMobileLineData:
+    async def _safe_fetch(self, coro: Any, default: Any) -> Any:
+        try:
+            return await coro
+        except FreeMobileAuthError:
+            raise
+        except FreeMobileApiError as err:
+            _LOGGER.debug("Optional Free Mobile endpoint failed: %s", err)
+            return default
+
+    async def _async_fetch_line(
+        self, line_meta: dict[str, Any], debit_method: dict[str, Any] | None = None
+    ) -> FreeMobileLineData:
         login = str(line_meta.get("login") or self.main_login)
-        consumption, offer, options_list, invoices, unpaids, sims = await asyncio.gather(
+        raw_offer_id = line_meta.get("offerId")
+        offer_id = int(raw_offer_id) if raw_offer_id is not None else None
+
+        puk_coro = (
+            self._safe_fetch(self.client.async_get_puk(offer_id), None)
+            if offer_id is not None
+            else asyncio.sleep(0, result=None)
+        )
+
+        (
+            consumption,
+            offer,
+            options_list,
+            invoices,
+            unpaids,
+            sims,
+            puk,
+            services,
+            insurances,
+            plan_info,
+            proxi_eligibility,
+            retractation,
+            banners,
+            communications,
+        ) = await asyncio.gather(
             self.client.async_get_consumption(login),
             self.client.async_get_offer(login),
             self.client.async_get_options(login),
             self.client.async_get_invoices(login),
             self.client.async_get_unpaids(login),
             self.client.async_get_sims(login),
+            puk_coro,
+            self._safe_fetch(self.client.async_get_services(login), []),
+            self._safe_fetch(self.client.async_get_insurances(login), []),
+            self._safe_fetch(self.client.async_get_plan_info(login), {}),
+            self._safe_fetch(self.client.async_get_proxi_eligibility(login), {}),
+            self._safe_fetch(self.client.async_get_retractation(login), {}),
+            self._safe_fetch(self.client.async_get_banners(login), []),
+            self._safe_fetch(self.client.async_get_communications(login), {}),
         )
         options_map = {
             str(opt["id"]): opt
@@ -78,17 +136,33 @@ class FreeMobileDataUpdateCoordinator(DataUpdateCoordinator[dict[str, FreeMobile
             state=str(line_meta.get("state") or "active"),
             has_freebox_advantage=bool(line_meta.get("hasFreeboxAdvantage", False)),
             is_master=bool(line_meta.get("isMaster", login == self.main_login)),
+            offer_id=offer_id,
+            subscription_date=line_meta.get("subscriptionDate"),
+            is_flex_eligible=bool(line_meta.get("isFlexEligible", False)),
+            is_watch_eligible=bool(line_meta.get("isWatchEligible", False)),
+            contact=line_meta.get("contact") if isinstance(line_meta.get("contact"), dict) else {},
+            identity=line_meta.get("identity") if isinstance(line_meta.get("identity"), dict) else {},
+            debit_method=debit_method if isinstance(debit_method, dict) else {},
             consumption=consumption if isinstance(consumption, dict) else {},
             offer=offer if isinstance(offer, dict) else {},
             options=options_map,
             invoices=invoices if isinstance(invoices, dict) else {},
             unpaids=unpaids if isinstance(unpaids, dict) else {},
             sims=sims if isinstance(sims, list) else [],
+            puk=puk,
+            services=services if isinstance(services, list) else [],
+            insurances=insurances if isinstance(insurances, list) else [],
+            plan_info=plan_info if isinstance(plan_info, dict) else {},
+            proxi_eligibility=proxi_eligibility if isinstance(proxi_eligibility, dict) else {},
+            retractation=retractation if isinstance(retractation, dict) else {},
+            banners=banners if isinstance(banners, list) else [],
+            communications=communications if isinstance(communications, dict) else {},
         )
 
     async def _async_update_data(self) -> dict[str, FreeMobileLineData]:
         try:
             subscriber = await self.client.async_get_subscriber(self.main_login)
+            debit_method = subscriber.get("debitMethod")
             lines = subscriber.get("lines") or [
                 {
                     "login": self.main_login,
@@ -103,7 +177,7 @@ class FreeMobileDataUpdateCoordinator(DataUpdateCoordinator[dict[str, FreeMobile
             ] or lines
 
             results = await asyncio.gather(
-                *(self._async_fetch_line(line) for line in active_lines)
+                *(self._async_fetch_line(line, debit_method=debit_method) for line in active_lines)
             )
             return {line.login: line for line in results}
         except FreeMobileAuthError as err:

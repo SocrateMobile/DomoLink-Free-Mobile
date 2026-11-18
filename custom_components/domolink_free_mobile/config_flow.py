@@ -93,8 +93,8 @@ class FreeMobileConfigFlow(ConfigFlow, domain=DOMAIN):
                     if switched.get("id") is not None:
                         self._otp_id = int(switched["id"])
                     self._type_2fa = str(switched.get("transport", "email"))
-                except FreeMobileApiError:
-                    errors["base"] = "cannot_connect"
+                except FreeMobileApiError as err:
+                    errors["base"] = "server_error" if "HTTP 5" in str(err) else "cannot_connect"
             else:
                 raw_code = str(user_input.get(CONF_OTP_CODE, "")).strip()
                 if not raw_code.isdigit() or self._otp_id is None:
@@ -109,8 +109,8 @@ class FreeMobileConfigFlow(ConfigFlow, domain=DOMAIN):
                         return self._create_token_entry(self._username, data, client.trust_uuid)
                     except FreeMobileAuthError:
                         errors["base"] = "invalid_otp"
-                    except FreeMobileApiError:
-                        errors["base"] = "cannot_connect"
+                    except FreeMobileApiError as err:
+                        errors["base"] = "server_error" if "HTTP 5" in str(err) else "cannot_connect"
 
         return self.async_show_form(
             step_id="otp",

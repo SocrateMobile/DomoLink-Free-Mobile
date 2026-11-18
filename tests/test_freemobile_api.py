@@ -300,3 +300,60 @@ def test_config_flow_otp_invalid_code_returns_form_error(monkeypatch):
     res = asyncio.run(flow.async_step_otp({"otp_code": "abc", "switch_email_otp": False}))
     assert res["type"] == "form"
     assert res["errors"]["base"] == "invalid_otp"
+
+
+def test_new_apk_endpoints_and_helpers():
+    from custom_components.domolink_free_mobile.sensor import (
+        _active_services_count,
+        _communications_count,
+        _national_quota_gb,
+        _national_remaining_gb,
+        _national_usage_pct,
+        _offer_price_eur,
+        _sim_type,
+    )
+
+    session = FakeSession([
+        FakeResponse(200, {"puk": "12345678"}),
+        FakeResponse(200, {"services": [{"id": 1, "name": "VoLTE", "isActive": True}, {"id": 2, "name": "VVM", "isActive": False}]}),
+        FakeResponse(200, {"insurances": [{"name": "Assurance Vol"}]}),
+        FakeResponse(200, {"is_eligible": True, "has_contact_open": False, "web_url": "https://free.fr"}),
+        FakeResponse(200, {"banners": [{"title": "Info"}]}),
+        FakeResponse(200, {"mail": {"totalItems": 3}, "sms": {"totalItems": 2}}),
+        FakeResponse(200, {"retractable": False}),
+        FakeResponse(200, {"detailPlanUrl": "https://mobile.free.fr/plan"}),
+        FakeResponse(200, [{"iso": "FR", "name": "France"}]),
+    ])
+    client = FreeMobileApiClient(session, access_token="tok")
+
+    assert asyncio.run(client.async_get_puk(42)) == "12345678"
+    assert session.calls[0][2]["params"] == {"offerId": 42}
+    assert len(asyncio.run(client.async_get_services("12345678"))) == 2
+    assert len(asyncio.run(client.async_get_insurances("12345678"))) == 1
+    assert asyncio.run(client.async_get_proxi_eligibility("12345678"))["is_eligible"] is True
+    assert len(asyncio.run(client.async_get_banners("12345678"))) == 1
+    assert asyncio.run(client.async_get_communications("12345678"))["mail"]["totalItems"] == 3
+    assert asyncio.run(client.async_get_retractation("12345678"))["retractable"] is False
+    assert asyncio.run(client.async_get_plan_info("12345678"))["detailPlanUrl"] == "https://mobile.free.fr/plan"
+    assert asyncio.run(client.async_get_roaming("12345678"))[0]["iso"] == "FR"
+
+    line = FreeMobileLineData(
+        login="12345678",
+        msisdn="0601020304",
+        plan_type="19.99",
+        state="active",
+        has_freebox_advantage=True,
+        is_master=True,
+        consumption={"national": {"consumption": {"data": 50 * (1024**3)}}},
+        offer={"price": "19,99 €", "nationalData": {"fairuse": 250 * (1024**3), "fairuseFreebox": 300 * (1024**3)}},
+        services=[{"id": 1, "name": "VoLTE", "isActive": True}, {"id": 2, "name": "VVM", "isActive": False}],
+        sims=[{"simCardType": "eSIM", "state": "active"}],
+        communications={"mail": {"totalItems": 3}, "sms": {"totalItems": 2}},
+    )
+    assert _national_quota_gb(line) == 300.0
+    assert _national_remaining_gb(line) == 250.0
+    assert _national_usage_pct(line) == 16.7
+    assert _offer_price_eur(line) == 19.99
+    assert _active_services_count(line) == 1
+    assert _sim_type(line) == "eSIM"
+    assert _communications_count(line) == 5
