@@ -14,7 +14,12 @@ import pytest
 # Stub minimal homeassistant modules so package imports cleanly without HA installed
 ha_pkg = types.ModuleType("homeassistant")
 ha_const = types.ModuleType("homeassistant.const")
-ha_const.Platform = types.SimpleNamespace(SENSOR="sensor", BINARY_SENSOR="binary_sensor", SWITCH="switch")
+ha_const.Platform = types.SimpleNamespace(
+    SENSOR="sensor",
+    BINARY_SENSOR="binary_sensor",
+    SWITCH="switch",
+    BUTTON="button",
+)
 ha_const.CONF_PASSWORD = "password"
 ha_const.CONF_USERNAME = "username"
 ha_const.UnitOfInformation = types.SimpleNamespace(GIGABYTES="GB")
@@ -62,6 +67,7 @@ ha_ce.ConfigFlowResult = dict
 
 ha_exc = types.ModuleType("homeassistant.exceptions")
 ha_exc.ConfigEntryAuthFailed = type("ConfigEntryAuthFailed", (Exception,), {})
+ha_exc.HomeAssistantError = type("HomeAssistantError", (Exception,), {})
 
 ha_helpers = types.ModuleType("homeassistant.helpers")
 ha_aio = types.ModuleType("homeassistant.helpers.aiohttp_client")
@@ -71,7 +77,15 @@ ha_dr.DeviceInfo = dict
 ha_ep = types.ModuleType("homeassistant.helpers.entity_platform")
 ha_ep.AddEntitiesCallback = object
 ha_uc = types.ModuleType("homeassistant.helpers.update_coordinator")
-ha_uc.DataUpdateCoordinator = type("DataUpdateCoordinator", (), {"__class_getitem__": classmethod(lambda cls, item: cls), "__init__": lambda self, *a, **kw: None})
+ha_uc.DataUpdateCoordinator = type(
+    "DataUpdateCoordinator",
+    (),
+    {
+        "__class_getitem__": classmethod(lambda cls, item: cls),
+        "__init__": lambda self, *a, **kw: setattr(self, "data", {}),
+        "async_set_updated_data": lambda self, data: setattr(self, "data", data),
+    },
+)
 ha_uc.CoordinatorEntity = type("CoordinatorEntity", (), {"__class_getitem__": classmethod(lambda cls, item: cls), "__init__": lambda self, coord: setattr(self, "coordinator", coord)})
 ha_uc.UpdateFailed = type("UpdateFailed", (Exception,), {})
 
@@ -92,6 +106,9 @@ ha_sensor.SensorEntity = object
 ha_sensor.SensorEntityDescription = _StubSensorEntityDescription
 ha_sensor.SensorStateClass = types.SimpleNamespace(TOTAL_INCREASING="total_increasing", TOTAL="total")
 
+ha_button = types.ModuleType("homeassistant.components.button")
+ha_button.ButtonEntity = object
+
 for name, mod in [
     ("homeassistant", ha_pkg),
     ("homeassistant.const", ha_const),
@@ -105,6 +122,7 @@ for name, mod in [
     ("homeassistant.helpers.update_coordinator", ha_uc),
     ("homeassistant.components", ha_comp),
     ("homeassistant.components.sensor", ha_sensor),
+    ("homeassistant.components.button", ha_button),
 ]:
     sys.modules.setdefault(name, mod)
 
@@ -357,3 +375,56 @@ def test_new_apk_endpoints_and_helpers():
     assert _active_services_count(line) == 1
     assert _sim_type(line) == "eSIM"
     assert _communications_count(line) == 5
+
+
+def test_puk_fetched_only_on_demand():
+    from custom_components.domolink_free_mobile.button import FreeMobileRequestPukButton
+    from custom_components.domolink_free_mobile.coordinator import FreeMobileDataUpdateCoordinator
+
+    async def _ok(val):
+        return val
+
+    puk_calls = []
+
+    async def _get_puk(offer_id):
+        puk_calls.append(offer_id)
+        return "87654321"
+
+    fake_client = types.SimpleNamespace(
+        async_get_subscriber=lambda login: _ok({
+            "lines": [{"login": "58544160", "msisdn": "0601020304", "offerId": 42, "state": "active", "isMaster": True}]
+        }),
+        async_get_consumption=lambda login: _ok({}),
+        async_get_offer=lambda login: _ok({}),
+        async_get_options=lambda login: _ok([]),
+        async_get_invoices=lambda login: _ok({}),
+        async_get_unpaids=lambda login: _ok({}),
+        async_get_sims=lambda login: _ok([]),
+        async_get_puk=_get_puk,
+        async_get_services=lambda login: _ok([]),
+        async_get_insurances=lambda login: _ok([]),
+        async_get_plan_info=lambda login: _ok({}),
+        async_get_proxi_eligibility=lambda login: _ok({}),
+        async_get_retractation=lambda login: _ok({}),
+        async_get_banners=lambda login: _ok([]),
+        async_get_communications=lambda login: _ok({}),
+    )
+
+    coord = FreeMobileDataUpdateCoordinator(hass=None, client=fake_client, main_login="58544160", entry=MagicMock())
+    data = asyncio.run(coord._async_update_data())
+    coord.data = data
+
+    # Polling must NOT call async_get_puk
+    assert puk_calls == []
+    assert coord.data["58544160"].puk is None
+
+    # Pressing the button fetches PUK once and updates the sensor data
+    btn = FreeMobileRequestPukButton(coord, "58544160")
+    asyncio.run(btn.async_press())
+    assert puk_calls == [42]
+    assert coord.data["58544160"].puk == "87654321"
+
+    # Subsequent polling keeps the cached PUK without re-calling async_get_puk
+    data_after = asyncio.run(coord._async_update_data())
+    assert puk_calls == [42]
+    assert data_after["58544160"].puk == "87654321"

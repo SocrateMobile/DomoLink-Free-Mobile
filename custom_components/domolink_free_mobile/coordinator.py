@@ -9,7 +9,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import FreeMobileApiClient, FreeMobileApiError, FreeMobileAuthError
@@ -70,6 +70,7 @@ class FreeMobileDataUpdateCoordinator(DataUpdateCoordinator[dict[str, FreeMobile
         self.client = client
         self.main_login = main_login
         self.entry = entry
+        self._puk_cache: dict[str, str | None] = {}
 
     async def _safe_fetch(self, coro: Any, default: Any) -> Any:
         try:
@@ -87,12 +88,6 @@ class FreeMobileDataUpdateCoordinator(DataUpdateCoordinator[dict[str, FreeMobile
         raw_offer_id = line_meta.get("offerId")
         offer_id = int(raw_offer_id) if raw_offer_id is not None else None
 
-        puk_coro = (
-            self._safe_fetch(self.client.async_get_puk(offer_id), None)
-            if offer_id is not None
-            else asyncio.sleep(0, result=None)
-        )
-
         (
             consumption,
             offer,
@@ -100,7 +95,6 @@ class FreeMobileDataUpdateCoordinator(DataUpdateCoordinator[dict[str, FreeMobile
             invoices,
             unpaids,
             sims,
-            puk,
             services,
             insurances,
             plan_info,
@@ -115,7 +109,6 @@ class FreeMobileDataUpdateCoordinator(DataUpdateCoordinator[dict[str, FreeMobile
             self.client.async_get_invoices(login),
             self.client.async_get_unpaids(login),
             self.client.async_get_sims(login),
-            puk_coro,
             self._safe_fetch(self.client.async_get_services(login), []),
             self._safe_fetch(self.client.async_get_insurances(login), []),
             self._safe_fetch(self.client.async_get_plan_info(login), {}),
@@ -149,7 +142,7 @@ class FreeMobileDataUpdateCoordinator(DataUpdateCoordinator[dict[str, FreeMobile
             invoices=invoices if isinstance(invoices, dict) else {},
             unpaids=unpaids if isinstance(unpaids, dict) else {},
             sims=sims if isinstance(sims, list) else [],
-            puk=puk,
+            puk=self._puk_cache.get(login),
             services=services if isinstance(services, list) else [],
             insurances=insurances if isinstance(insurances, list) else [],
             plan_info=plan_info if isinstance(plan_info, dict) else {},
@@ -184,3 +177,29 @@ class FreeMobileDataUpdateCoordinator(DataUpdateCoordinator[dict[str, FreeMobile
             raise ConfigEntryAuthFailed(f"Free Mobile authentication failed: {err}") from err
         except FreeMobileApiError as err:
             raise UpdateFailed(f"Error updating Free Mobile data: {err}") from err
+
+    async def async_request_puk(self, login: str) -> str | None:
+        """Fetch the PUK code on demand for a line and update its cached state."""
+        data = self.data or {}
+        line = data.get(login)
+        if line is None or line.offer_id is None:
+            raise HomeAssistantError(
+                "Impossible de récupérer le code PUK : identifiant d'offre introuvable."
+            )
+
+        try:
+            puk = await self.client.async_get_puk(line.offer_id)
+        except FreeMobileAuthError as err:
+            self.entry.async_start_reauth(self.hass)
+            raise HomeAssistantError(
+                "La session Free Mobile a expiré. Veuillez vous ré-authentifier."
+            ) from err
+        except FreeMobileApiError as err:
+            raise HomeAssistantError(
+                f"Erreur lors de la récupération du code PUK : {err}"
+            ) from err
+
+        self._puk_cache[login] = puk
+        line.puk = puk
+        self.async_set_updated_data(data)
+        return puk
