@@ -14,7 +14,8 @@ import pytest
 # Stub minimal homeassistant modules so package imports cleanly without HA installed
 ha_pkg = types.ModuleType("homeassistant")
 ha_const = types.ModuleType("homeassistant.const")
-ha_const.Platform = types.SimpleNamespace(SENSOR="sensor", BINARY_SENSOR="binary_sensor", SWITCH="switch")
+ha_const.Platform = types.SimpleNamespace(SENSOR="sensor", BINARY_SENSOR="binary_sensor", SWITCH="switch", BUTTON="button")
+ha_const.EntityCategory = types.SimpleNamespace(DIAGNOSTIC="diagnostic", CONFIG="config")
 ha_const.CONF_PASSWORD = "password"
 ha_const.CONF_USERNAME = "username"
 ha_const.UnitOfInformation = types.SimpleNamespace(GIGABYTES="GB")
@@ -62,6 +63,7 @@ ha_ce.ConfigFlowResult = dict
 
 ha_exc = types.ModuleType("homeassistant.exceptions")
 ha_exc.ConfigEntryAuthFailed = type("ConfigEntryAuthFailed", (Exception,), {})
+ha_exc.HomeAssistantError = type("HomeAssistantError", (Exception,), {})
 
 ha_helpers = types.ModuleType("homeassistant.helpers")
 ha_aio = types.ModuleType("homeassistant.helpers.aiohttp_client")
@@ -71,8 +73,25 @@ ha_dr.DeviceInfo = dict
 ha_ep = types.ModuleType("homeassistant.helpers.entity_platform")
 ha_ep.AddEntitiesCallback = object
 ha_uc = types.ModuleType("homeassistant.helpers.update_coordinator")
-ha_uc.DataUpdateCoordinator = type("DataUpdateCoordinator", (), {"__class_getitem__": classmethod(lambda cls, item: cls), "__init__": lambda self, *a, **kw: None})
-ha_uc.CoordinatorEntity = type("CoordinatorEntity", (), {"__class_getitem__": classmethod(lambda cls, item: cls), "__init__": lambda self, coord: setattr(self, "coordinator", coord)})
+ha_uc.DataUpdateCoordinator = type(
+    "DataUpdateCoordinator",
+    (),
+    {
+        "__class_getitem__": classmethod(lambda cls, item: cls),
+        "__init__": lambda self, *a, **kw: None,
+        "async_update_listeners": lambda self: None,
+    },
+)
+ha_uc.CoordinatorEntity = type(
+    "CoordinatorEntity",
+    (),
+    {
+        "__class_getitem__": classmethod(lambda cls, item: cls),
+        "__init__": lambda self, coord: setattr(self, "coordinator", coord),
+        "available": property(lambda self: True),
+        "hass": None,
+    },
+)
 ha_uc.UpdateFailed = type("UpdateFailed", (Exception,), {})
 
 ha_comp = types.ModuleType("homeassistant.components")
@@ -86,11 +105,19 @@ class _StubSensorEntityDescription:
     device_class: str | None = None
     state_class: str | None = None
     icon: str | None = None
+    entity_registry_enabled_default: bool = True
+    entity_category: str | None = None
 
 ha_sensor.SensorDeviceClass = types.SimpleNamespace(DATA_SIZE="data_size", DURATION="duration", MONETARY="monetary")
 ha_sensor.SensorEntity = object
 ha_sensor.SensorEntityDescription = _StubSensorEntityDescription
 ha_sensor.SensorStateClass = types.SimpleNamespace(TOTAL_INCREASING="total_increasing", TOTAL="total")
+
+ha_button = types.ModuleType("homeassistant.components.button")
+ha_button.ButtonEntity = object
+ha_pn = types.ModuleType("homeassistant.components.persistent_notification")
+ha_pn.async_create = MagicMock()
+ha_comp.persistent_notification = ha_pn
 
 for name, mod in [
     ("homeassistant", ha_pkg),
@@ -105,6 +132,8 @@ for name, mod in [
     ("homeassistant.helpers.update_coordinator", ha_uc),
     ("homeassistant.components", ha_comp),
     ("homeassistant.components.sensor", ha_sensor),
+    ("homeassistant.components.button", ha_button),
+    ("homeassistant.components.persistent_notification", ha_pn),
 ]:
     sys.modules.setdefault(name, mod)
 
@@ -357,3 +386,61 @@ def test_new_apk_endpoints_and_helpers():
     assert _active_services_count(line) == 1
     assert _sim_type(line) == "eSIM"
     assert _communications_count(line) == 5
+
+
+def test_coordinator_does_not_poll_puk_until_button_pressed():
+    from custom_components.domolink_free_mobile.button import FreeMobileRequestPukButton
+    from custom_components.domolink_free_mobile.coordinator import FreeMobileDataUpdateCoordinator
+    from custom_components.domolink_free_mobile.sensor import SENSOR_DESCRIPTIONS
+
+    def _line_responses():
+        return [
+            FakeResponse(200, {
+                "debitMethod": {"type": "SEPA"},
+                "lines": [{"login": "12345678", "msisdn": "0601020304", "offerId": 42, "state": "active"}],
+            }),
+            FakeResponse(200, {"national": {"consumption": {"data": 100}}}),
+            FakeResponse(200, {"planType": "19.99", "name": "Forfait Free 5G"}),
+            FakeResponse(200, {"options": []}),
+            FakeResponse(200, {"invoices": []}),
+            FakeResponse(200, {"personalUnpaids": []}),
+            FakeResponse(200, {"sims": [{"state": "active"}]}),
+            FakeResponse(200, {"services": []}),
+            FakeResponse(200, {"insurances": []}),
+            FakeResponse(200, {}),
+            FakeResponse(200, {}),
+            FakeResponse(200, {}),
+            FakeResponse(200, {"banners": []}),
+            FakeResponse(200, {"mail": {"totalItems": 0}}),
+        ]
+
+    ha_pn.async_create.reset_mock()
+    session = FakeSession(_line_responses())
+    client = FreeMobileApiClient(session, access_token="tok")
+    coordinator = FreeMobileDataUpdateCoordinator(hass=object(), client=client, main_login="12345678", entry=object())
+
+    data = asyncio.run(coordinator._async_update_data())
+    assert all("/puk" not in url for _, url, _ in session.calls)
+    assert data["12345678"].puk is None
+
+    coordinator.data = data
+    btn = FreeMobileRequestPukButton(coordinator, "12345678")
+    btn.hass = object()
+
+    session._responses.append(FakeResponse(200, {"puk": "87654321"}))
+    asyncio.run(btn.async_press())
+
+    puk_calls = [(m, u, kw) for m, u, kw in session.calls if "/puk" in u]
+    assert len(puk_calls) == 1
+    assert puk_calls[0][2]["params"] == {"offerId": 42}
+    assert coordinator.data["12345678"].puk == "87654321"
+
+    puk_desc = next(d for d in SENSOR_DESCRIPTIONS if d.key == "puk_code")
+    assert puk_desc.value_fn(coordinator.data["12345678"]) == "••••21"
+    ha_pn.async_create.assert_called_once()
+    assert "87654321" in ha_pn.async_create.call_args.kwargs["message"]
+
+    session._responses.extend(_line_responses())
+    data2 = asyncio.run(coordinator._async_update_data())
+    assert len([(m, u, kw) for m, u, kw in session.calls if "/puk" in u]) == 1
+    assert data2["12345678"].puk == "87654321"

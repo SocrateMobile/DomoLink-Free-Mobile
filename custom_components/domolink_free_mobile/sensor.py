@@ -13,7 +13,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfInformation, UnitOfTime
+from homeassistant.const import EntityCategory, UnitOfInformation, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -454,6 +454,7 @@ SENSOR_DESCRIPTIONS: tuple[FreeMobileSensorDescription, ...] = (
         key="puk_code",
         name="Code PUK",
         icon="mdi:lock-reset",
+        entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
         value_fn=lambda l: f"••••{str(l.puk)[-2:]}" if l.puk else None,
     ),
