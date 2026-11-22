@@ -454,7 +454,8 @@ SENSOR_DESCRIPTIONS: tuple[FreeMobileSensorDescription, ...] = (
         key="puk_code",
         name="Code PUK",
         icon="mdi:lock-reset",
-        value_fn=lambda l: l.puk,
+        entity_registry_enabled_default=False,
+        value_fn=lambda l: f"••••{str(l.puk)[-2:]}" if l.puk else None,
     ),
     FreeMobileSensorDescription(
         key="banners_count",
