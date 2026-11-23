@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections.abc import Callable
+import json
 import logging
+import time
 from typing import Any
 
 import aiohttp
@@ -85,6 +88,23 @@ class FreeMobileApiClient:
             headers.update(extra_headers)
         return headers
 
+    def _is_token_expired(self, leeway_seconds: int = 120) -> bool:
+        """Return True if the JWT access_token is expired or within leeway_seconds of expiry."""
+        if not self.access_token:
+            return False
+        parts = self.access_token.split(".")
+        if len(parts) != 3:
+            return False
+        try:
+            payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(payload_b64).decode("utf-8"))
+            exp = payload.get("exp")
+            if isinstance(exp, (int, float)):
+                return time.time() >= (float(exp) - leeway_seconds)
+        except Exception:
+            return False
+        return False
+
     async def _request(
         self,
         method: str,
@@ -98,6 +118,9 @@ class FreeMobileApiClient:
         retry_on_401: bool = True,
         raw_bytes: bool = False,
     ) -> Any:
+        if include_auth and retry_on_401 and self.refresh_token and self._is_token_expired():
+            await self.async_refresh_token()
+
         url = f"{BASE_URL}{path.lstrip('/')}"
         headers = self._base_headers(include_auth=include_auth, extra_headers=extra_headers)
 
@@ -111,7 +134,7 @@ class FreeMobileApiClient:
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as resp:
-                if resp.status == 401 and retry_on_401 and include_auth and self.refresh_token:
+                if resp.status in (401, 403) and retry_on_401 and include_auth and self.refresh_token:
                     await self.async_refresh_token()
                     return await self._request(
                         method,

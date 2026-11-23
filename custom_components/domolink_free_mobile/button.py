@@ -66,7 +66,11 @@ class FreeMobileRequestPukButton(
         """Fetch PUK code once on manual press and display a notification."""
         try:
             puk = await self.coordinator.async_request_puk(self._login)
-        except (FreeMobileAuthError, FreeMobileApiError) as err:
+        except FreeMobileAuthError as err:
+            if hasattr(self.coordinator.entry, "async_start_reauth"):
+                self.coordinator.entry.async_start_reauth(self.hass)
+            raise HomeAssistantError(f"La session Free Mobile a expiré : {err}") from err
+        except FreeMobileApiError as err:
             raise HomeAssistantError(f"Impossible de récupérer le code PUK : {err}") from err
 
         msisdn = (

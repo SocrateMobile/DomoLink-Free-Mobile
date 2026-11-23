@@ -436,7 +436,7 @@ def test_coordinator_does_not_poll_puk_until_button_pressed():
     assert coordinator.data["12345678"].puk == "87654321"
 
     puk_desc = next(d for d in SENSOR_DESCRIPTIONS if d.key == "puk_code")
-    assert puk_desc.value_fn(coordinator.data["12345678"]) == "••••21"
+    assert puk_desc.value_fn(coordinator.data["12345678"]) == "87654321"
     ha_pn.async_create.assert_called_once()
     assert "87654321" in ha_pn.async_create.call_args.kwargs["message"]
 
@@ -444,3 +444,53 @@ def test_coordinator_does_not_poll_puk_until_button_pressed():
     data2 = asyncio.run(coordinator._async_update_data())
     assert len([(m, u, kw) for m, u, kw in session.calls if "/puk" in u]) == 1
     assert data2["12345678"].puk == "87654321"
+
+
+def test_403_triggers_single_refresh_and_retries():
+    refreshed_calls = []
+    session = FakeSession([
+        FakeResponse(403, {"message": "Forbidden", "statusCode": 403}, text_data='{"message":"Forbidden","statusCode":403}'),
+        FakeResponse(200, {"accessToken": "acc-new", "refreshToken": "ref-new"}),
+        FakeResponse(200, {"lines": [{"login": "58544160", "msisdn": "0689915756"}]}),
+    ])
+    client = FreeMobileApiClient(
+        session,
+        access_token="acc-old",
+        refresh_token="ref-old",
+        on_tokens_refreshed=lambda a, r: refreshed_calls.append((a, r)),
+    )
+    data = asyncio.run(client.async_get_subscriber("58544160"))
+    assert data["lines"][0]["login"] == "58544160"
+    assert refreshed_calls == [("acc-new", "ref-new")]
+    assert len(session.calls) == 3
+    assert session.calls[1][0] == "POST"
+    assert "refreshToken" in session.calls[1][1]
+    assert session.calls[2][2]["headers"]["Authorization"] == "Bearer acc-new"
+
+
+def test_expired_jwt_proactively_refreshes_before_request():
+    import base64
+    import json
+
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).decode().rstrip("=")
+    payload = base64.urlsafe_b64encode(json.dumps({"exp": 1000}).encode()).decode().rstrip("=")
+    expired_jwt = f"{header}.{payload}.sig"
+
+    refreshed_calls = []
+    session = FakeSession([
+        FakeResponse(200, {"accessToken": "acc-fresh", "refreshToken": "ref-fresh"}),
+        FakeResponse(200, {"lines": []}),
+    ])
+    client = FreeMobileApiClient(
+        session,
+        access_token=expired_jwt,
+        refresh_token="ref-old",
+        on_tokens_refreshed=lambda a, r: refreshed_calls.append((a, r)),
+    )
+    data = asyncio.run(client.async_get_subscriber("58544160"))
+    assert data == {"lines": []}
+    assert refreshed_calls == [("acc-fresh", "ref-fresh")]
+    assert len(session.calls) == 2
+    assert session.calls[0][0] == "POST"
+    assert "refreshToken" in session.calls[0][1]
+    assert session.calls[1][2]["headers"]["Authorization"] == "Bearer acc-fresh"

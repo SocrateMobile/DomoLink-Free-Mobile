@@ -199,7 +199,7 @@ SENSOR_DESCRIPTIONS: tuple[FreeMobileSensorDescription, ...] = (
         name="Data nationale consommée",
         native_unit_of_measurement=UnitOfInformation.GIGABYTES,
         device_class=SensorDeviceClass.DATA_SIZE,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:cellular",
         value_fn=lambda l: _bytes_to_gb(
             l.consumption.get("national", {}).get("consumption", {}).get("data")
@@ -233,7 +233,7 @@ SENSOR_DESCRIPTIONS: tuple[FreeMobileSensorDescription, ...] = (
         name="Data roaming consommée",
         native_unit_of_measurement=UnitOfInformation.GIGABYTES,
         device_class=SensorDeviceClass.DATA_SIZE,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:earth",
         value_fn=lambda l: _bytes_to_gb(
             l.consumption.get("roaming", {}).get("consumption", {}).get("data")
@@ -255,7 +255,7 @@ SENSOR_DESCRIPTIONS: tuple[FreeMobileSensorDescription, ...] = (
         name="Appels nationaux",
         native_unit_of_measurement=UnitOfTime.MINUTES,
         device_class=SensorDeviceClass.DURATION,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:phone",
         value_fn=lambda l: _seconds_to_min(
             l.consumption.get("national", {})
@@ -269,7 +269,7 @@ SENSOR_DESCRIPTIONS: tuple[FreeMobileSensorDescription, ...] = (
         name="Appels internationaux",
         native_unit_of_measurement=UnitOfTime.MINUTES,
         device_class=SensorDeviceClass.DURATION,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:phone-outgoing",
         value_fn=lambda l: _seconds_to_min(
             l.consumption.get("national", {})
@@ -283,7 +283,7 @@ SENSOR_DESCRIPTIONS: tuple[FreeMobileSensorDescription, ...] = (
         name="Appels numéros spéciaux",
         native_unit_of_measurement=UnitOfTime.MINUTES,
         device_class=SensorDeviceClass.DURATION,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:phone-alert",
         value_fn=lambda l: _seconds_to_min(
             l.consumption.get("national", {})
@@ -297,7 +297,7 @@ SENSOR_DESCRIPTIONS: tuple[FreeMobileSensorDescription, ...] = (
         name="Appels roaming émis",
         native_unit_of_measurement=UnitOfTime.MINUTES,
         device_class=SensorDeviceClass.DURATION,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:phone-roaming",
         value_fn=lambda l: _seconds_to_min(
             l.consumption.get("roaming", {})
@@ -311,7 +311,7 @@ SENSOR_DESCRIPTIONS: tuple[FreeMobileSensorDescription, ...] = (
         name="Appels roaming reçus",
         native_unit_of_measurement=UnitOfTime.MINUTES,
         device_class=SensorDeviceClass.DURATION,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:phone-incoming",
         value_fn=lambda l: _seconds_to_min(
             l.consumption.get("roaming", {})
@@ -323,35 +323,35 @@ SENSOR_DESCRIPTIONS: tuple[FreeMobileSensorDescription, ...] = (
     FreeMobileSensorDescription(
         key="national_sms",
         name="SMS nationaux",
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:message-text",
         value_fn=lambda l: l.consumption.get("national", {}).get("consumption", {}).get("sms"),
     ),
     FreeMobileSensorDescription(
         key="national_sms_plus",
         name="SMS+ nationaux",
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:message-plus",
         value_fn=lambda l: l.consumption.get("national", {}).get("consumption", {}).get("smsPlus"),
     ),
     FreeMobileSensorDescription(
         key="national_mms",
         name="MMS nationaux",
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:message-image",
         value_fn=lambda l: l.consumption.get("national", {}).get("consumption", {}).get("mms"),
     ),
     FreeMobileSensorDescription(
         key="roaming_sms",
         name="SMS roaming",
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:message-text-outline",
         value_fn=lambda l: l.consumption.get("roaming", {}).get("consumption", {}).get("sms"),
     ),
     FreeMobileSensorDescription(
         key="roaming_mms",
         name="MMS roaming",
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         icon="mdi:message-image-outline",
         value_fn=lambda l: l.consumption.get("roaming", {}).get("consumption", {}).get("mms"),
     ),
@@ -456,7 +456,7 @@ SENSOR_DESCRIPTIONS: tuple[FreeMobileSensorDescription, ...] = (
         icon="mdi:lock-reset",
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
-        value_fn=lambda l: f"••••{str(l.puk)[-2:]}" if l.puk else None,
+        value_fn=lambda l: str(l.puk) if l.puk else None,
     ),
     FreeMobileSensorDescription(
         key="banners_count",
